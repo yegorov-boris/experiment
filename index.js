@@ -5,12 +5,12 @@ import zipdir from 'zip-dir';
 import { parseStringPromise, Builder } from 'xml2js';
 import { find } from 'xml2js-xpath';
 import { convert } from 'libreoffice-convert';
-import { decode } from 'html-entities';
-
+import rimraf from 'rimraf';
 import mkdirp from 'mkdirp';
 
 const docx2pdf = promisify(convert);
 const execP = promisify(exec);
+const rimrafP = promisify(rimraf);
 const fsP = fs.promises;
 
 async function processDocx(fileType, id, data) {
@@ -28,9 +28,10 @@ async function processDocx(fileType, id, data) {
 
   const resps = [];
 
-  for (const {from, to, translates} of data.Text) {
-    await execP(`unzip ${pathDocx} -d ${dir}to`);
-    const path = `${dir}${to}/word/document.xml`;
+  for (const {translates} of data.Text) {
+    const dirTo = `${dir}${Date.now()}`;
+    await execP(`unzip ${pathDocx} -d ${dirTo}`);
+    const path = `${dirTo}/word/document.xml`;
     const xmlData = await fsP.readFile(path);
     const doc = await parseStringPromise(xmlData.toString());
     const matches = find(doc, "//w:r");
@@ -47,9 +48,17 @@ async function processDocx(fileType, id, data) {
 
         run['w:t'].forEach((t, k) => {
           let part = '';
-          if (typeof t === 'string') part = t;
-          if (typeof t['_'] === 'string') part = t['_'];
-          if (!part) return;
+
+          if (typeof t === 'string') {
+            part = t
+          } else if (typeof t['_'] === 'string') {
+            part = t['_']
+          } else if (t['$'] && t['$']['xml:space'] === 'preserve') {
+            part = ' '
+          } else {
+            return
+          }
+
           joinedText += part;
           const right = left + part.length;
           borders.push([j, k, left, right]);
@@ -58,7 +67,10 @@ async function processDocx(fileType, id, data) {
       });
 
       const foundL = joinedText.indexOf(text);
-      if (foundL === -1) return;
+      if (foundL === -1) {
+        console.log(text);
+        return;
+      }
       const foundR = foundL + text.length;
 
       for (const [j, k, l, r] of borders) {
@@ -102,148 +114,86 @@ async function processDocx(fileType, id, data) {
     const builder = new Builder();
     const updatedXML = builder.buildObject(doc);
     await fsP.writeFile(path, updatedXML);
-    const buffer = await zipdir(`${dir}${to}`);
-    const pathTo = `${dir}${to}.docx`;
-    await fsP.writeFile(pathTo, buffer);
+    const buffer = await zipdir(`${dirTo}`);
 
     if (fileType === 'pdf') {
       const bufferPdf = await docx2pdf(buffer, 'pdf', undefined);
-      await fsP.writeFile(`${dir}${to}.pdf`, bufferPdf);
-      resps.push({from, to, buffer: bufferPdf})
+      resps.push(bufferPdf)
     } else {
-      resps.push({from, to, buffer})
+      resps.push(buffer)
     }
   }
+
+  await rimrafP(dir);
 
   return resps
 }
 
-async function testDocx(path) {
+async function testDocx(path, tr) {
   const dataDocx = await fsP.readFile(path);
   const resultDocx = await processDocx('docx', 1, {
     buffer: dataDocx,
-    Text: [
-      // {
-      //   translates: [
-      //
-      //   ]
-      // },
-      {
-        // from: 'en',
-        // to: 'ru',
-        translates: [
-          {
-            text: 'While not posing substantial technical climbing challenges on the standard route, Everest presents dangers such as altitude sickness weather and wind as well as significant hazards from avalanches and the Khumbu Icefal',
-            translatedText: 'Не создавая серьезных технических проблем для поднятия на стандартном пути, Эверест несет в себе такие опасности, как высотная болезнь, погодные условия'
-          },
-          {
-            text: 'There are two main climbing routes one approaching the summit from the southeast in Nepal known as the standard route and the other from the north in Tibet',
-            translatedText: 'Есть два основных маршрута для восхождения: один приближается к вершине с юго-востока в Непале (известный как «стандартный путь»), а другой - с севера в Тибете.'
-          },
-          {
-            text: 'Mount Everest is Earth\'s highest mountain above sea level located in the Mahalangur Himal',
-            translatedText: 'Гора Эверест - самая высокая гора на Земле над уровнем моря расположенная в Махалангурских Гималах'
-          },
-          {
-            text: 'As of 2019 over 300 people have died on Everest many of whose bodies remain on the mountain',
-            translatedText: 'По состоянию на 2019 год на Эвересте погибло более 300 человек, тела многих из них остались на горе.'
-          },
-          {
-            text: 'Mount Everest attracts many climbers, including highly experienced mountaineers',
-            translatedText: 'Гора Эверест привлекает множество туристов, в том числе опытных альпинистов.'
-          },
-          {
-            text: 'The China–Nepal border runs across its summit point.',
-            translatedText: 'Граница между Китаем и Непалом проходит через его точку.'
-          }
-        ]
-      },
-      // {
-      //   // from: 'en',
-      //   // to: 'ru',
-      //   translates: [
-      //     {
-      //       text: 'While not posing substantial technical climbing challenges on the standard route, Everest presents dangers such as altitude sickness weather and wind as well as significant hazards from avalanches and the Khumbu Icefal',
-      //       translatedText: 'Не создавая серьезных технических проблем для поднятия на стандартном пути, Эверест несет в себе такие опасности, как высотная болезнь, погодные условия'
-      //     },
-      //     {
-      //       text: 'There are two main climbing routes one approaching the summit from the southeast in Nepal known as the standard route and the other from the north in Tibet',
-      //       translatedText: 'Есть два основных маршрута для восхождения: один приближается к вершине с юго-востока в Непале (известный как «стандартный путь»), а другой - с севера в Тибете.'
-      //     },
-      //     {
-      //       text: 'Mount Everest is Earth\'s highest mountain above sea level located in the Mahalangur Himal',
-      //       translatedText: 'Гора Эверест - самая высокая гора на Земле над уровнем моря расположенная в Махалангурских Гималах'
-      //     },
-      //     {
-      //       text: 'As of 2019 over 300 people have died on Everest many of whose bodies remain on the mountain',
-      //       translatedText: 'По состоянию на 2019 год на Эвересте погибло более 300 человек, тела многих из них остались на горе.'
-      //     },
-      //     {
-      //       text: 'Mount Everest attracts many climbers, including highly experienced mountaineers',
-      //       translatedText: 'Гора Эверест привлекает множество туристов, в том числе опытных альпинистов.'
-      //     },
-      //     {
-      //       text: 'The China–Nepal border runs across its summit point.',
-      //       translatedText: 'Граница между Китаем и Непалом проходит через его точку.'
-      //     }
-      //   ]
-      // }
-    ]
+    Text: tr
   });
 
-  await Promise.all(resultDocx.map(({buffer}, i) => fsP.writeFile(`result${i}.docx`, buffer)));
+  await Promise.all(resultDocx.map((buffer, i) => fsP.writeFile(`result${i}.docx`, buffer)));
 }
 
-async function testPdf(path) {
+async function testPdf(path, tr) {
   const dataPdf = await fsP.readFile(path);
   const resultPdf = await processDocx('pdf', 2, {
     buffer: dataPdf,
-    Text: [
-      {
-        from: 'en',
-        to: 'ru',
-        translates: [
-          {
-            text: 'While not posing substantial technical climbing challenges on the standard route, Everest presents dangers such as altitude sickness weather and wind as well as significant hazards from avalanches and the Khumbu Icefal',
-            translatedText: 'Не создавая серьезных технических проблем для поднятия на стандартном пути, Эверест несет в себе такие опасности, как высотная болезнь, погодные условия'
-          },
-          {
-            text: 'There are two main climbing routes one approaching the summit from the southeast in Nepal known as the standard route and the other from the north in Tibet',
-            translatedText: 'Есть два основных маршрута для восхождения: один приближается к вершине с юго-востока в Непале (известный как «стандартный путь»), а другой - с севера в Тибете.'
-          },
-          {
-            text: 'Mount Everest is Earthaposs highest mountain above sea level located in the Mahalangur Himal',
-            translatedText: 'Гора Эверест - самая высокая гора на Земле над уровнем моря расположенная в Махалангурских Гималах'
-          },
-          {
-            text: 'As of 2019 over 300 people have died on Everest many of whose bodies remain on the mountain',
-            translatedText: 'По состоянию на 2019 год на Эвересте погибло более 300 человек, тела многих из них остались на горе.'
-          },
-          {
-            text: 'Mount Everest attracts many climbers, including highly experienced mountaineers',
-            translatedText: 'Гора Эверест привлекает множество туристов, в том числе опытных альпинистов.'
-          },
-          {
-            text: 'The China–Nepal border runs across its summit point.',
-            translatedText: 'Граница между Китаем и Непалом проходит через его точку.'
-          }
-        ]
-      }
-    ]
+    Text: tr
   });
-  await Promise.all(resultPdf.map(({buffer}, i) => fsP.writeFile(`result${i}.pdf`, buffer)));
+  await Promise.all(resultPdf.map((buffer, i) => fsP.writeFile(`result${i}.pdf`, buffer)));
 }
+
+const trs = [
+  [
+    {
+      translates: [
+        {
+          text: 'Mount Everest is Earth\'s highest mountain above sea level, located in the Mahalangur Himal',
+          translatedText: 'Гора Эверест - самая высокая гора на Земле над уровнем моря расположенная в Махалангурских Гималах'
+        },
+      ]
+    },
+  ],
+  [
+    {
+      translates: [
+        {
+          text: 'While not posing substantial technical climbing challenges on the standard route, Everest presents dangers such as altitude sickness weather and wind as well as significant hazards from avalanches and the Khumbu Icefal',
+          translatedText: 'Не создавая серьезных технических проблем для поднятия на стандартном пути, Эверест несет в себе такие опасности, как высотная болезнь, погодные условия'
+        },
+        {
+          text: 'There are two main climbing routes one approaching the summit from the southeast in Nepal known as the standard route and the other from the north in Tibet',
+          translatedText: 'Есть два основных маршрута для восхождения: один приближается к вершине с юго-востока в Непале (известный как «стандартный путь»), а другой - с севера в Тибете.'
+        },
+        {
+          text: 'Mount Everest is Earth\'s highest mountain above sea level located in the Mahalangur Himal',
+          translatedText: 'Гора Эверест - самая высокая гора на Земле над уровнем моря расположенная в Махалангурских Гималах'
+        },
+        {
+          text: 'As of 2019 over 300 people have died on Everest many of whose bodies remain on the mountain',
+          translatedText: 'По состоянию на 2019 год на Эвересте погибло более 300 человек, тела многих из них остались на горе.'
+        },
+        {
+          text: 'Mount Everest attracts many climbers, including highly experienced mountaineers',
+          translatedText: 'Гора Эверест привлекает множество туристов, в том числе опытных альпинистов.'
+        },
+        {
+          text: 'The China–Nepal border runs across its summit point.',
+          translatedText: 'Граница между Китаем и Непалом проходит через его точку.'
+        }
+      ]
+    }
+  ]
+];
 
 async function main() {
   try {
-    // await testDocx('./english-test.docx');
-    await testDocx('./Test_File.docx');
-    await testPdf('./Test_File.pdf');
-
-    // await testDocx('./article_about_giraffes_test_file.docx');
-    // await testDocx('./CAT_article_with_two_columns_test-file.docx');
-    // await testPdf('./Article_about_elefants_test_file.pdf');
-    // await testPdf('./CAT_article_with_two_columns_test-file.pdf');
+    await testDocx('./Test_File.docx', trs[0]);
     console.log('finished')
   } catch (e) {
     console.error(e)

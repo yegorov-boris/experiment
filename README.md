@@ -1,9 +1,9 @@
-### демо обработки docx с помощью Node.js
+### substitute pieces of text with translations in docx and pdf
 
-на машине, на которой установлен Node.js, выполнить
+on a machine with Node.js 14.18 or higher and npm installed
 
-`node index.js`
+run `npm install` once in this directory
 
-после выполнения в папке Test_File будет лежать test.docx
+then run `node index.js` in this directory
 
-в нем заголовок Эверест (в исходнике Everest)
+check `result*` files

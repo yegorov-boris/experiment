@@ -20,9 +20,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-*.docx
-*.pdf
+/test_files
 
 .idea/
 
 *lock.json
+
+/uploads
