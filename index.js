@@ -35,11 +35,12 @@ async function processDocx(fileType, id, data) {
     const xmlData = await fsP.readFile(path);
     const doc = await parseStringPromise(xmlData.toString());
     const matches = find(doc, "//w:r");
+    const punctuation = /[.,\/#!$%\^&\*;:{}=\-_`~()"']/g;
 
     [...translates].sort((x, y) => (y?.text?.length || 0) - (x?.text?.length || 0)).forEach(({text, translatedText}) => {
       if (!translatedText) return;
 
-      let joinedText = '';
+      let joined = '';
       const borders = [];
       let left = 0;
 
@@ -59,24 +60,36 @@ async function processDocx(fileType, id, data) {
             return
           }
 
-          joinedText += part;
+          joined += part;
           const right = left + part.length;
           borders.push([j, k, left, right]);
           left = right;
         });
       });
 
-      const foundL = joinedText.indexOf(text);
-      if (foundL === -1) {
+      const filteredJoined = joined.replace(punctuation, '');
+      const rel = filteredJoined.split('').map((letter, pf) => {
+        if (pf === 0) return 0;
+        if (pf === filteredJoined.length - 1) return joined.length - 1;
+        let pj = pf;
+        while (joined[pj] !== letter) pj++;
+        return pj
+      });
+
+      const filteredText = text.replace(punctuation, '');
+      const foundF = filteredJoined.indexOf(filteredText);
+      if (foundF === -1) {
         console.log(text);
         return;
       }
-      const foundR = foundL + text.length;
+      
+      const foundL = rel[foundF];
+      const foundR = rel[foundF + filteredText.length - 1] + 1;
 
       for (const [j, k, l, r] of borders) {
         if (r <= foundL || l >= foundR) continue;
 
-        if (joinedText.slice(l, r).includes(text)) {
+        if (joined.slice(l, r).includes(text)) {
           if (typeof matches[j]['w:t'][k] === 'string') {
             matches[j]['w:t'][k] = matches[j]['w:t'][k].replace(text, translatedText)
           } else {
@@ -193,7 +206,7 @@ const trs = [
 
 async function main() {
   try {
-    await testDocx('./Test_File.docx', trs[0]);
+    await testDocx('./Test_File.docx', trs[1]);
     console.log('finished')
   } catch (e) {
     console.error(e)
