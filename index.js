@@ -68,10 +68,10 @@ async function processDocx(fileType, id, data) {
       });
 
       const filteredJoined = joined.replace(punctuation, '');
+      let pj = 0;
       const rel = filteredJoined.split('').map((letter, pf) => {
         if (pf === 0) return 0;
         if (pf === filteredJoined.length - 1) return joined.length - 1;
-        let pj = pf;
         while (joined[pj] !== letter) pj++;
         return pj
       });
@@ -85,15 +85,16 @@ async function processDocx(fileType, id, data) {
       
       const foundL = rel[foundF];
       const foundR = rel[foundF + filteredText.length - 1] + 1;
+      const found = joined.slice(foundL, foundR);
 
       for (const [j, k, l, r] of borders) {
         if (r <= foundL || l >= foundR) continue;
 
-        if (joined.slice(l, r).includes(text)) {
+        if (joined.slice(l, r).includes(found)) {
           if (typeof matches[j]['w:t'][k] === 'string') {
-            matches[j]['w:t'][k] = matches[j]['w:t'][k].replace(text, translatedText)
+            matches[j]['w:t'][k] = matches[j]['w:t'][k].replace(found, translatedText)
           } else {
-            matches[j]['w:t'][k]['_'] = matches[j]['w:t'][k]['_'].replace(text, translatedText)
+            matches[j]['w:t'][k]['_'] = matches[j]['w:t'][k]['_'].replace(found, translatedText)
           }
           break
         }
