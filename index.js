@@ -13,7 +13,7 @@ const execP = promisify(exec);
 const rimrafP = promisify(rimraf);
 const fsP = fs.promises;
 
-async function processDocx(fileType, id, data) {
+async function processDocx(fileType, id, data, filterPunctuation=true) {
   const dir = `./uploads/${id}/`;
   await mkdirp(dir);
   const pathDefault = `${dir}default.${fileType}`;
@@ -67,16 +67,24 @@ async function processDocx(fileType, id, data) {
         });
       });
 
-      const filteredJoined = joined.replace(punctuation, '');
-      let pj = 0;
-      const rel = filteredJoined.split('').map((letter, pf) => {
-        if (pf === 0) return 0;
-        if (pf === filteredJoined.length - 1) return joined.length - 1;
-        while (joined[pj] !== letter) pj++;
-        return pj
-      });
+      let filteredJoined, filteredText, rel;
 
-      const filteredText = text.replace(punctuation, '');
+      if (filterPunctuation) {
+        filteredJoined = joined.replace(punctuation, '');
+        let pj = 0;
+        rel = filteredJoined.split('').map((letter, pf) => {
+          if (pf === 0) return 0;
+          if (pf === filteredJoined.length - 1) return joined.length - 1;
+          while (joined[pj] !== letter) pj++;
+          return pj
+        });
+        filteredText = text.replace(punctuation, '');
+      } else {
+        filteredJoined = joined;
+        filteredText = text;
+        rel = filteredJoined.split('').map((_, pf) => pf);
+      }
+
       const foundF = filteredJoined.indexOf(filteredText);
       if (foundF === -1) {
         console.log(text);
@@ -143,23 +151,25 @@ async function processDocx(fileType, id, data) {
   return resps
 }
 
-async function testDocx(path, tr) {
+async function testDocx(path, tr, outName, filterPunctuation=true) {
   const dataDocx = await fsP.readFile(path);
-  const resultDocx = await processDocx('docx', 1, {
+  const data = {
     buffer: dataDocx,
     Text: tr
-  });
+  };
+  const resultDocx = await processDocx('docx', 1, data, filterPunctuation);
 
-  await Promise.all(resultDocx.map((buffer, i) => fsP.writeFile(`result${i}.docx`, buffer)));
+  await Promise.all(resultDocx.map((buffer, i) => fsP.writeFile(`${outName}${i}.docx`, buffer)));
 }
 
-async function testPdf(path, tr) {
+async function testPdf(path, tr, outName, filterPunctuation=true) {
   const dataPdf = await fsP.readFile(path);
-  const resultPdf = await processDocx('pdf', 2, {
+  const data = {
     buffer: dataPdf,
     Text: tr
-  });
-  await Promise.all(resultPdf.map((buffer, i) => fsP.writeFile(`result${i}.pdf`, buffer)));
+  };
+  const resultPdf = await processDocx('pdf', 2, data, filterPunctuation);
+  await Promise.all(resultPdf.map((buffer, i) => fsP.writeFile(`${outName}${i}.pdf`, buffer)));
 }
 
 const trs = [
@@ -207,7 +217,8 @@ const trs = [
 
 async function main() {
   try {
-    await testDocx('./Test_File.docx', trs[1]);
+    await testDocx('./Test_File.docx', trs[1], 'new');
+    await testDocx('./Test_File.docx', trs[1], 'old', false);
     console.log('finished')
   } catch (e) {
     console.error(e)
