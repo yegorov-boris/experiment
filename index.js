@@ -13,6 +13,150 @@ const execP = promisify(exec);
 const rimrafP = promisify(rimraf);
 const fsP = fs.promises;
 
+function restoreOrder(doc, docOrdered) {
+  const matches = find(doc, "//w:p");
+  const matchesOrdered = find(docOrdered, "//w:p");
+  matches.forEach((m, i) => {
+    const rs = m['w:r'];
+    if (!rs) return;
+    const rsNew = [];
+    rs.forEach((r, j) => {
+      if (r['w:t']?.length < 2) {
+        rsNew.push(r);
+        return
+      }
+      let k = 0;
+      let rNew = {
+        ...r,
+        'w:t': [""]
+      };
+      delete rNew['w:br'];
+      matchesOrdered[i]['w:r'][j]['$$'].forEach(v => {
+        const name = v['#name'];
+        if (name === 'w:br') {
+          rNew['w:br'] = rNew['w:br'] || [];
+          rNew['w:br'].push("")
+        }
+        if (name === 'w:t') {
+          if (rNew['w:t'][0]) {
+            rsNew.push({...rNew});
+            rNew = {
+              ...r,
+              'w:t': [r['w:t'][k]]
+            };
+            delete rNew['w:br'];
+          } else {
+            rNew['w:t'] = [r['w:t'][k]]
+          }
+          k++
+        }
+      });
+      rsNew.push({...rNew});
+    });
+    m['w:r'] = rsNew;
+  });
+}
+
+function applyTranslations(translates, doc, filterPunctuation) {
+  const matches = find(doc, "//w:r");
+  const punctuation = /[.,\/#!$%\^&\*;:{}=\-_`~()"']/g;
+  [...translates].sort((x, y) => (y?.text?.length || 0) - (x?.text?.length || 0)).forEach(({text, translatedText}) => {
+    if (!translatedText) return;
+
+    let joined = '';
+    const borders = [];
+    let left = 0;
+
+    matches.forEach((run, j) => {
+      if (!run['w:t']) return;
+
+      run['w:t'].forEach((t, k) => {
+        let part = '';
+
+        if (typeof t === 'string') {
+          part = t
+        } else if (typeof t['_'] === 'string') {
+          part = t['_']
+        } else if (t['$'] && t['$']['xml:space'] === 'preserve') {
+          part = ' '
+        } else {
+          return
+        }
+
+        joined += part;
+        const right = left + part.length;
+        borders.push([j, k, left, right]);
+        left = right;
+      });
+    });
+
+    let filteredJoined, filteredText, rel;
+
+    if (filterPunctuation) {
+      filteredJoined = joined.replace(punctuation, '');
+      let pj = 0;
+      rel = filteredJoined.split('').map((letter, pf) => {
+        if (pf === 0) return 0;
+        if (pf === filteredJoined.length - 1) return joined.length - 1;
+        while (joined[pj] !== letter) pj++;
+        return pj
+      });
+      filteredText = text.replace(punctuation, '');
+    } else {
+      filteredJoined = joined;
+      filteredText = text;
+      rel = filteredJoined.split('').map((_, pf) => pf);
+    }
+
+    const foundF = filteredJoined.indexOf(filteredText);
+    if (foundF === -1) {
+      console.log(text);
+      return;
+    }
+
+    const foundL = rel[foundF];
+    const foundR = rel[foundF + filteredText.length - 1] + 1;
+    const found = joined.slice(foundL, foundR);
+
+    for (const [j, k, l, r] of borders) {
+      if (r <= foundL || l >= foundR) continue;
+
+      if (joined.slice(l, r).includes(found)) {
+        if (typeof matches[j]['w:t'][k] === 'string') {
+          matches[j]['w:t'][k] = matches[j]['w:t'][k].replace(found, translatedText)
+        } else {
+          matches[j]['w:t'][k]['_'] = matches[j]['w:t'][k]['_'].replace(found, translatedText)
+        }
+        break
+      }
+
+      if (foundL < l && foundR > r) {
+        if (typeof matches[j]['w:t'][k] === 'string') {
+          matches[j]['w:t'][k] = ''
+        } else {
+          matches[j]['w:t'][k]['_'] = ''
+        }
+        continue
+      }
+
+      if (foundL >= l && foundL < r) {
+        if (typeof matches[j]['w:t'][k] === 'string') {
+          matches[j]['w:t'][k] = matches[j]['w:t'][k].slice(0, foundL - l) + translatedText
+        } else {
+          matches[j]['w:t'][k]['_'] = matches[j]['w:t'][k]['_'].slice(0, foundL - l) + translatedText
+        }
+        continue
+      }
+
+      if (typeof matches[j]['w:t'][k] === 'string') {
+        matches[j]['w:t'][k] = matches[j]['w:t'][k].slice(foundR - l)
+      } else {
+        matches[j]['w:t'][k]['_'] = matches[j]['w:t'][k]['_'].slice(foundR - l)
+      }
+    }
+  });
+}
+
 async function processDocx(fileType, id, data, filterPunctuation=true) {
   const dir = `./uploads/${id}/`;
   await mkdirp(dir);
@@ -34,105 +178,12 @@ async function processDocx(fileType, id, data, filterPunctuation=true) {
     const path = `${dirTo}/word/document.xml`;
     const xmlData = await fsP.readFile(path);
     const doc = await parseStringPromise(xmlData.toString());
-    const matches = find(doc, "//w:r");
-    const punctuation = /[.,\/#!$%\^&\*;:{}=\-_`~()"']/g;
-
-    [...translates].sort((x, y) => (y?.text?.length || 0) - (x?.text?.length || 0)).forEach(({text, translatedText}) => {
-      if (!translatedText) return;
-
-      let joined = '';
-      const borders = [];
-      let left = 0;
-
-      matches.forEach((run, j) => {
-        if (!run['w:t']) return;
-
-        run['w:t'].forEach((t, k) => {
-          let part = '';
-
-          if (typeof t === 'string') {
-            part = t
-          } else if (typeof t['_'] === 'string') {
-            part = t['_']
-          } else if (t['$'] && t['$']['xml:space'] === 'preserve') {
-            part = ' '
-          } else {
-            return
-          }
-
-          joined += part;
-          const right = left + part.length;
-          borders.push([j, k, left, right]);
-          left = right;
-        });
-      });
-
-      let filteredJoined, filteredText, rel;
-
-      if (filterPunctuation) {
-        filteredJoined = joined.replace(punctuation, '');
-        let pj = 0;
-        rel = filteredJoined.split('').map((letter, pf) => {
-          if (pf === 0) return 0;
-          if (pf === filteredJoined.length - 1) return joined.length - 1;
-          while (joined[pj] !== letter) pj++;
-          return pj
-        });
-        filteredText = text.replace(punctuation, '');
-      } else {
-        filteredJoined = joined;
-        filteredText = text;
-        rel = filteredJoined.split('').map((_, pf) => pf);
-      }
-
-      const foundF = filteredJoined.indexOf(filteredText);
-      if (foundF === -1) {
-        console.log(text);
-        return;
-      }
-      
-      const foundL = rel[foundF];
-      const foundR = rel[foundF + filteredText.length - 1] + 1;
-      const found = joined.slice(foundL, foundR);
-
-      for (const [j, k, l, r] of borders) {
-        if (r <= foundL || l >= foundR) continue;
-
-        if (joined.slice(l, r).includes(found)) {
-          if (typeof matches[j]['w:t'][k] === 'string') {
-            matches[j]['w:t'][k] = matches[j]['w:t'][k].replace(found, translatedText)
-          } else {
-            matches[j]['w:t'][k]['_'] = matches[j]['w:t'][k]['_'].replace(found, translatedText)
-          }
-          break
-        }
-
-        if (foundL < l && foundR > r) {
-          if (typeof matches[j]['w:t'][k] === 'string') {
-            matches[j]['w:t'][k] = ''
-          } else {
-            matches[j]['w:t'][k]['_'] = ''
-          }
-          continue
-        }
-
-        if (foundL >= l && foundL < r) {
-          if (typeof matches[j]['w:t'][k] === 'string') {
-            matches[j]['w:t'][k] = matches[j]['w:t'][k].slice(0, foundL - l) + translatedText
-          } else {
-            matches[j]['w:t'][k]['_'] = matches[j]['w:t'][k]['_'].slice(0, foundL - l) + translatedText
-          }
-          continue
-        }
-
-        if (typeof matches[j]['w:t'][k] === 'string') {
-          matches[j]['w:t'][k] = matches[j]['w:t'][k].slice(foundR - l)
-        } else {
-          matches[j]['w:t'][k]['_'] = matches[j]['w:t'][k]['_'].slice(foundR - l)
-        }
-      }
+    const docOrdered = await parseStringPromise(xmlData.toString(), {
+      preserveChildrenOrder: true,
+      explicitChildren: true
     });
-
+    restoreOrder(doc, docOrdered);
+    applyTranslations(translates, doc, filterPunctuation);
     const builder = new Builder();
     const updatedXML = builder.buildObject(doc);
     await fsP.writeFile(path, updatedXML);
@@ -212,13 +263,40 @@ const trs = [
         }
       ]
     }
+  ],
+  [
+    {
+      translates: [
+        {
+          text: 'test',
+          translatedText: 'тест'
+        }
+      ]
+    },
+    {
+      translates: [
+        {
+          text: 'All together now',
+          translatedText: 'Все вместе сейчас'
+        }
+      ]
+    },
+    {
+      translates: [
+        {
+          text: 'together',
+          translatedText: 'вместе'
+        }
+      ]
+    }
   ]
 ];
 
 async function main() {
   try {
-    await testDocx('./Test_File.docx', trs[1], 'new');
-    await testDocx('./Test_File.docx', trs[1], 'old', false);
+    await testDocx('./lyrics.docx', trs[2], 'new');
+    // await testDocx('./Test_File.docx', trs[1], 'new');
+    // await testDocx('./Test_File.docx', trs[1], 'old', false);
     console.log('finished')
   } catch (e) {
     console.error(e)
