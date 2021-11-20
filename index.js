@@ -104,18 +104,41 @@ function matchesToText(matches) {
       left = right;
     });
   });
-  const emails = (joined.match(emailRegex()) || []).map(email => {
-    const i = joined.indexOf(email);
-    return [i, i + email.length]
-  });
+  const lr = x => {
+    const i = joined.indexOf(x);
+    return [i, i + x.length]
+  };
+  const emails = (joined.match(emailRegex()) || []).map(lr);
+  const parts = joined.split(' ');
+  const urls = parts
+    .filter(u => {
+      try {
+        new URL(u);
+        return true
+      } catch {
+        if (u.slice(0, 4) !== 'www.') return false;
+        try {
+          new URL(`http://${u}`);
+          console.log(joined);
+          return true
+        } catch {
+          return false
+        }
+      }
+    })
+    .map(lr);
 
-  return {joined, borders, emails}
+  return {
+    joined,
+    borders,
+    escape: emails.concat(urls)
+  }
 }
 
 function applyTranslation(paragraph, text, translatedText, filterPunctuation) {
   const matches = find(paragraph, "//w:r");
   const punctuation = /[.,\/#!$%\^&\*;:{}=\-_`~()"']/g;
-  const {joined, borders, emails} = matchesToText(matches);
+  const {joined, borders, escape} = matchesToText(matches);
   let filteredJoined, filteredText, rel;
 
   if (filterPunctuation) {
@@ -140,7 +163,7 @@ function applyTranslation(paragraph, text, translatedText, filterPunctuation) {
   const foundL = rel[foundF];
   const foundR = rel[foundF + filteredText.length - 1] + 1;
 
-  for (const [el, er] of emails) {
+  for (const [el, er] of escape) {
     if (el <= foundL && er >= foundR) return false;
   }
 
@@ -358,9 +381,9 @@ const trs = [
 
 (async () => {
   try {
-    await testDocx('./meta327b.docx', trs[5], 'new');
+    // await testDocx('./meta327b.docx', trs[5], 'new');
     // await testDocx('./lyrics_punct.docx', trs[4], 'new');
-    // await testDocx('./Test_File.docx', trs[1], 'new');
+    await testDocx('./Test_File.docx', trs[1], 'new');
     // await testDocx('./Test_File.docx', trs[1], 'old', false);
     console.log('finished')
   } catch (e) {
