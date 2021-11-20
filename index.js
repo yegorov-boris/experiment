@@ -14,9 +14,8 @@ const rimrafP = promisify(rimraf);
 const fsP = fs.promises;
 
 function restoreOrder(doc, docOrdered) {
-  const matches = find(doc, "//w:p");
   const matchesOrdered = find(docOrdered, "//w:p");
-  matches.forEach((m, i) => {
+  find(doc, "//w:p").forEach((m, i) => {
     const rs = m['w:r'];
     if (!rs) return;
     const rsNew = [];
@@ -55,6 +54,23 @@ function restoreOrder(doc, docOrdered) {
     });
     m['w:r'] = rsNew;
   });
+
+  const body = doc['w:document']['w:body'][0];
+  if (!body['w:tbl']?.length || !body['w:p']?.length) return;
+
+  let p = 0;
+  let t = 0;
+  docOrdered['w:document']['w:body'][0]['$$'].forEach(tag => {
+    const name = tag['#name'];
+    if (name === 'w:p') {
+      p++;
+      return
+    }
+
+    body['w:p'].splice(p, 0, {'w:tbl': {...body['w:tbl'][t]}});
+    t++
+  });
+  delete body['w:tbl'];
 }
 
 function applyTranslation(doc, text, translatedText, filterPunctuation) {
@@ -270,7 +286,7 @@ const trs = [
     {
       translates: [
         {
-          text: 'test',
+          text: 'testtest',
           translatedText: 'тест'
         }
       ]
@@ -300,8 +316,9 @@ const trs = [
 
 async function main() {
   try {
-    await testDocx('./lyrics_punct.docx', trs[3], 'new');
-    // await testDocx('./Test_File.docx', trs[1], 'new');
+    // await testDocx('./meta327.docx', trs[2], 'new');
+    // await testDocx('./lyrics_punct.docx', trs[2], 'new');
+    await testDocx('./Test_File.docx', trs[1], 'new');
     // await testDocx('./Test_File.docx', trs[1], 'old', false);
     console.log('finished')
   } catch (e) {
