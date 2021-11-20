@@ -13,14 +13,18 @@ const execP = promisify(exec);
 const rimrafP = promisify(rimraf);
 const fsP = fs.promises;
 
+const safeLen = x => x?.length || 0;
+
 function restoreOrder(doc, docOrdered) {
-  const matchesOrdered = find(docOrdered, "//w:p");
-  find(doc, "//w:p").forEach((m, i) => {
+  const matches = doc['w:document']['w:body'][0]['w:p'];
+  if (!safeLen(matches)) return;
+  const matchesOrdered = docOrdered['w:document']['w:body'][0]['w:p'];
+  matches.forEach((m, i) => {
     const rs = m['w:r'];
     if (!rs) return;
     const rsNew = [];
     rs.forEach((r, j) => {
-      if (r['w:t']?.length < 2) {
+      if (safeLen(r['w:t']) < 2) {
         rsNew.push(r);
         return
       }
@@ -56,7 +60,7 @@ function restoreOrder(doc, docOrdered) {
   });
 
   const body = doc['w:document']['w:body'][0];
-  if (!body['w:tbl']?.length || !body['w:p']?.length) return;
+  if (!safeLen(body['w:tbl']) || !safeLen(body['w:p'])) return;
 
   let p = 0;
   let t = 0;
@@ -169,7 +173,7 @@ function applyTranslation(doc, text, translatedText, filterPunctuation) {
 }
 
 function applyTranslations(translates, doc, filterPunctuation) {
-  [...translates].sort((x, y) => (y?.text?.length || 0) - (x?.text?.length || 0)).forEach(({text, translatedText}) => {
+  [...translates].sort((x, y) => safeLen(y?.text) - safeLen(x?.text)).forEach(({text, translatedText}) => {
     if (!translatedText) return;
     while (applyTranslation(doc, text, translatedText, filterPunctuation)) {}
   });
@@ -311,14 +315,24 @@ const trs = [
         }
       ]
     }
+  ],
+  [
+    {
+      translates: [
+        {
+          text: 'wuerzburg',
+          translatedText: 'вюрцбург'
+        }
+      ]
+    }
   ]
 ];
 
 async function main() {
   try {
-    // await testDocx('./meta327.docx', trs[2], 'new');
+    await testDocx('./meta327b.docx', trs[5], 'new');
     // await testDocx('./lyrics_punct.docx', trs[2], 'new');
-    await testDocx('./Test_File.docx', trs[1], 'new');
+    // await testDocx('./Test_File.docx', trs[1], 'new');
     // await testDocx('./Test_File.docx', trs[1], 'old', false);
     console.log('finished')
   } catch (e) {
