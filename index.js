@@ -7,6 +7,7 @@ import { find } from 'xml2js-xpath';
 import { convert } from 'libreoffice-convert';
 import rimraf from 'rimraf';
 import mkdirp from 'mkdirp';
+import emailRegex from 'email-regex';
 
 const docx2pdf = promisify(convert);
 const execP = promisify(exec);
@@ -77,13 +78,10 @@ function restoreOrder(doc, docOrdered) {
   delete body['w:tbl'];
 }
 
-function applyTranslation(doc, text, translatedText, filterPunctuation) {
+function matchesToText(matches) {
   let joined = '';
   const borders = [];
   let left = 0;
-  const matches = find(doc, "//w:r");
-  const punctuation = /[.,\/#!$%\^&\*;:{}=\-_`~()"']/g;
-
   matches.forEach((run, j) => {
     if (!run['w:t']) return;
 
@@ -106,7 +104,18 @@ function applyTranslation(doc, text, translatedText, filterPunctuation) {
       left = right;
     });
   });
+  const emails = (joined.match(emailRegex()) || []).map(email => {
+    const i = joined.indexOf(email);
+    return [i, i + email.length]
+  });
 
+  return {joined, borders, emails}
+}
+
+function applyTranslation(paragraph, text, translatedText, filterPunctuation) {
+  const matches = find(paragraph, "//w:r");
+  const punctuation = /[.,\/#!$%\^&\*;:{}=\-_`~()"']/g;
+  const {joined, borders, emails} = matchesToText(matches);
   let filteredJoined, filteredText, rel;
 
   if (filterPunctuation) {
@@ -130,6 +139,11 @@ function applyTranslation(doc, text, translatedText, filterPunctuation) {
 
   const foundL = rel[foundF];
   const foundR = rel[foundF + filteredText.length - 1] + 1;
+
+  for (const [el, er] of emails) {
+    if (el <= foundL && er >= foundR) return false;
+  }
+
   const found = joined.slice(foundL, foundR);
 
   for (const [j, k, l, r] of borders) {
@@ -173,9 +187,15 @@ function applyTranslation(doc, text, translatedText, filterPunctuation) {
 }
 
 function applyTranslations(translates, doc, filterPunctuation) {
-  [...translates].sort((x, y) => safeLen(y?.text) - safeLen(x?.text)).forEach(({text, translatedText}) => {
+  translates.forEach(({text, translatedText}) => {
     if (!translatedText) return;
-    while (applyTranslation(doc, text, translatedText, filterPunctuation)) {}
+    find(doc, "//w:p").forEach(paragraph => {
+      if (paragraph['w:tbl']) {
+        applyTranslations(translates, paragraph, filterPunctuation)
+      } else {
+        while (applyTranslation(paragraph, text, translatedText, filterPunctuation)) {}
+      }
+    });
   });
 }
 
@@ -205,7 +225,11 @@ async function processDocx(fileType, id, data, filterPunctuation=true) {
       explicitChildren: true
     });
     restoreOrder(doc, docOrdered);
-    applyTranslations(translates, doc, filterPunctuation);
+    applyTranslations(
+      [...translates].sort((x, y) => safeLen(y?.text) - safeLen(x?.text)),
+      doc,
+      filterPunctuation
+    );
     const builder = new Builder();
     const updatedXML = builder.buildObject(doc);
     await fsP.writeFile(path, updatedXML);
@@ -322,22 +346,24 @@ const trs = [
         {
           text: 'wuerzburg',
           translatedText: 'вюрцбург'
+        },
+        {
+          text: 'Example',
+          translatedText: 'Пример'
         }
       ]
     }
   ]
 ];
 
-async function main() {
+(async () => {
   try {
     await testDocx('./meta327b.docx', trs[5], 'new');
-    // await testDocx('./lyrics_punct.docx', trs[2], 'new');
+    // await testDocx('./lyrics_punct.docx', trs[4], 'new');
     // await testDocx('./Test_File.docx', trs[1], 'new');
     // await testDocx('./Test_File.docx', trs[1], 'old', false);
     console.log('finished')
   } catch (e) {
     console.error(e)
   }
-}
-
-main()
+})()
